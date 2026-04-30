@@ -72,6 +72,11 @@ class StreamFlixApp : Application() {
         super.onCreate()
         instance = this
 
+        // Diagnostic crash logger — writes the last uncaught exception to the
+        // app's external files dir so it can be retrieved without adb.
+        // File: /storage/emulated/0/Android/data/com.streamfr.app/files/streamflix-crash.txt
+        installCrashLogger()
+
         // Track current foreground Activity for WebView dialogs
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) { currentActivity = activity }
@@ -165,6 +170,32 @@ class StreamFlixApp : Application() {
         super.onTrimMemory(level)
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
             CacheUtils.clearAppCache(this)
+        }
+    }
+
+    private fun installCrashLogger() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val dir = getExternalFilesDir(null) ?: filesDir
+                val file = java.io.File(dir, "streamflix-crash.txt")
+                java.io.PrintWriter(java.io.FileWriter(file, false)).use { pw ->
+                    pw.println("=== StreamFlix crash ===")
+                    pw.println("Time: ${java.util.Date()}")
+                    pw.println("Version: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+                    pw.println("Thread: ${thread.name}")
+                    pw.println()
+                    throwable.printStackTrace(pw)
+                    var cause = throwable.cause
+                    while (cause != null && cause !== throwable) {
+                        pw.println()
+                        pw.println("Caused by:")
+                        cause.printStackTrace(pw)
+                        cause = cause.cause
+                    }
+                }
+            } catch (_: Throwable) { /* swallow — never block the original handler */ }
+            previous?.uncaughtException(thread, throwable)
         }
     }
 }
