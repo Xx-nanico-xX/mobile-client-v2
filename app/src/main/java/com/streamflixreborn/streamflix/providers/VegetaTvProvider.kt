@@ -40,7 +40,9 @@ object VegetaTvProvider : Provider, IptvProvider {
     override val language = "fr"
 
     private const val TAG = "VegetaTvProvider"
-    private const val USER_AGENT = "VLC/3.0.18 LibVLC/3.0.18"
+    // 2026-05-10 : VLC fingerprinté par tvgold-max.info et autres serveurs Xtream
+    // qui coupent le stream à ~136KB pour les UA VLC. Mozilla = stream complet.
+    private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     private const val VEGETA_SERVERS_URL = "http://212.47.64.168/serveurs.txt"
 
     // ───────── HTTP ─────────
@@ -1340,6 +1342,53 @@ object VegetaTvProvider : Provider, IptvProvider {
             com.streamflixreborn.streamflix.fragments.player.settings
                 .IptvBannedChannels.isBanned(id)
         }
+
+        // ─── ★ Favoris EN TÊTE ───
+        // 2026-05-10 (user) : "histoire de favoris est aussi buggé tps Vegeta TV
+        // → applique tout ce que tu fais sur Vavoo aux autres providers".
+        // → on ajoute la section "Favoris" qu'IptvFavorites(Tv|Mobile)Fragment
+        // cherche dans getHome() pour peupler l'onglet ❤. Cohérent cross-provider.
+        try {
+            val favKeys = com.streamflixreborn.streamflix.utils.IptvFavoritesStore
+                .getAllCanonicalFavorites()
+            if (favKeys.isNotEmpty()) {
+                val favItems = mutableListOf<TvShow>()
+                // 1. Curated d'abord (logos officiels manualLogoMap)
+                for (c in curatedChannels) {
+                    if (c.key in favKeys && !isChannelBanned("vegeta::${c.key}")) {
+                        favItems += TvShow(
+                            id = "vegeta::${c.key}",
+                            title = c.displayName,
+                            poster = logoUrlFor(c.displayName),
+                            banner = logoUrlFor(c.displayName),
+                            providerName = name,
+                        )
+                    }
+                }
+                // 2. Registry channels (non-curated) qui sont en favoris
+                val seen = favItems.map { it.id }.toMutableSet()
+                val regSnapshot = synchronized(registryLock) {
+                    channelRegistry.entries.map { (k, info) -> Triple(k, info.displayName, info.logo) }
+                }
+                for ((key, displayName, logo) in regSnapshot) {
+                    val id = "vegeta::$key"
+                    if (key in favKeys && !isChannelBanned(id) && id !in seen) {
+                        favItems += TvShow(
+                            id = id,
+                            title = displayName,
+                            poster = logo.ifEmpty { logoUrlFor(displayName) },
+                            banner = logo.ifEmpty { logoUrlFor(displayName) },
+                            providerName = name,
+                        )
+                        seen += id
+                    }
+                }
+                if (favItems.isNotEmpty()) {
+                    sections.add(Category(name = "Favoris", list = favItems))
+                }
+            }
+        } catch (_: Throwable) { }
+
         for (catName in categoryOrder) {
             val items = curatedChannels
                 .filter { it.category == catName }
